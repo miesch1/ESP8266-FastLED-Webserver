@@ -52,13 +52,24 @@ ESP8266HTTPUpdateServer httpUpdateServer;
 
 #include "FSBrowser.h"
 
-#define DATA_PIN      D5
-#define LED_TYPE      WS2811
-#define COLOR_ORDER   RGB
-#define NUM_LEDS      200
+#if FASTLED_VERSION < 3001000
+#error "Requires FastLED 3.1 or later; check github for latest code."
+#endif
 
-#define MILLI_AMPS         2000 // IMPORTANT: set the max milli-Amps of your power supply (4A = 4000mA)
-#define FRAMES_PER_SECOND  120  // here you can control the speed. With the Access Point / Web Server the animations run a bit slower.
+#define LEVEL_SHIFTER_OEb D0 // Level Shifter Output Enable (Low is enabled)
+#define DATA_PIN    D7 // (MOSI) blue
+#define CLK_PIN   D5  // (SCK) purple
+#define LED_TYPE    APA102
+#define COLOR_ORDER BGR
+#define DATA_RATE DATA_RATE_MHZ(3)
+#define NUM_LEDS    486
+CRGB leds[NUM_LEDS];
+
+#define MILLI_AMPS         20000 // IMPORTANT: set the max milli-Amps of your power supply (4A = 4000mA)
+#define FRAMES_PER_SECOND  60  // here you can control the speed. With the Access Point / Web Server the animations run a bit slower.
+#define BRIGHTNESS          255
+#define TEMPERATURE_1 Tungsten40W
+#define COLOR_CORRECTION TypicalSMD5050
 
 const bool apMode = false;
 
@@ -71,9 +82,6 @@ const bool apMode = false;
 // Wi-Fi network to connect to (if not in AP mode)
 // char* ssid = "your-ssid";
 // char* password = "your-password";
-
-
-CRGB leds[NUM_LEDS];
 
 const uint8_t brightnessCount = 5;
 uint8_t brightnessMap[brightnessCount] = { 16, 32, 64, 128, 255 };
@@ -153,6 +161,7 @@ PatternAndNameList patterns = {
   { incandescentTwinkles,   "Incandescent Twinkles" },
 
   // TwinkleFOX patterns
+  { warm2700Twinkles,       "Warm 2700K Twinkles" },
   { retroC9Twinkles,        "Retro C9 Twinkles" },
   { redWhiteTwinkles,       "Red & White Twinkles" },
   { blueWhiteTwinkles,      "Blue & White Twinkles" },
@@ -222,10 +231,14 @@ void setup() {
   delay(100);
   Serial.setDebugOutput(true);
 
-  FastLED.addLeds<LED_TYPE, DATA_PIN, COLOR_ORDER>(leds, NUM_LEDS);         // for WS2812 (Neopixel)
-  //FastLED.addLeds<LED_TYPE,DATA_PIN,CLK_PIN,COLOR_ORDER>(leds, NUM_LEDS); // for APA102 (Dotstar)
+  // Enable the Level Shifter
+  pinMode(LEVEL_SHIFTER_OEb, OUTPUT);
+  digitalWrite(LEVEL_SHIFTER_OEb, LOW);
+
+  //FastLED.addLeds<LED_TYPE, DATA_PIN, COLOR_ORDER>(leds, NUM_LEDS);         // for WS2812 (Neopixel)
+  FastLED.addLeds<LED_TYPE, DATA_PIN, CLK_PIN, COLOR_ORDER, DATA_RATE>(leds, NUM_LEDS); // for APA102 (Dotstar)
   FastLED.setDither(false);
-  FastLED.setCorrection(TypicalLEDStrip);
+  FastLED.setCorrection(COLOR_CORRECTION);
   FastLED.setBrightness(brightness);
   FastLED.setMaxPowerInVoltsAndMilliamps(5, MILLI_AMPS);
   fill_solid(leds, NUM_LEDS, CRGB::Black);
@@ -293,9 +306,16 @@ void setup() {
   {
     WiFi.mode(WIFI_STA);
     Serial.printf("Connecting to %s\n", ssid);
-    if (String(WiFi.SSID()) != String(ssid)) {
-      WiFi.begin(ssid, password);
-    }
+    if (String(WiFi.SSID()) != String(ssid))
+	{
+		WiFi.begin(ssid, password);
+
+		// Wait for connection
+		while (WiFi.status() != WL_CONNECTED) {
+			delay(500);
+			Serial.print(".");
+		}
+	}
   }
 
   httpUpdateServer.setup(&webServer);
@@ -326,40 +346,31 @@ void setup() {
 
   webServer.on("/cooling", HTTP_POST, []() {
     String value = webServer.arg("value");
-    cooling = value.toInt();
-    broadcastInt("cooling", cooling);
+	setCooling(value.toInt());
     sendInt(cooling);
   });
 
   webServer.on("/sparking", HTTP_POST, []() {
     String value = webServer.arg("value");
-    sparking = value.toInt();
-    broadcastInt("sparking", sparking);
+	setSparking(value.toInt());
     sendInt(sparking);
   });
 
   webServer.on("/speed", HTTP_POST, []() {
     String value = webServer.arg("value");
-    speed = value.toInt();
-    broadcastInt("speed", speed);
+	setSpeed(value.toInt());
     sendInt(speed);
   });
 
   webServer.on("/twinkleSpeed", HTTP_POST, []() {
     String value = webServer.arg("value");
-    twinkleSpeed = value.toInt();
-    if (twinkleSpeed < 0) twinkleSpeed = 0;
-    else if (twinkleSpeed > 8) twinkleSpeed = 8;
-    broadcastInt("twinkleSpeed", twinkleSpeed);
+	setTwinkleSpeed(value.toInt());
     sendInt(twinkleSpeed);
   });
 
   webServer.on("/twinkleDensity", HTTP_POST, []() {
     String value = webServer.arg("value");
-    twinkleDensity = value.toInt();
-    if (twinkleDensity < 0) twinkleDensity = 0;
-    else if (twinkleDensity > 8) twinkleDensity = 8;
-    broadcastInt("twinkleDensity", twinkleDensity);
+	setTwinkleDensity(value.toInt());
     sendInt(twinkleDensity);
   });
 
@@ -768,19 +779,36 @@ void loop() {
 //  }
 //}
 
+enum EEPROM_Settings {
+  addBrightness,
+  addPattern,
+  addColor_R,
+  addColor_G,
+  addColor_B,
+  addPower,
+  addAutoplay,
+  addAutoplay_Duration,
+  addPalette,
+  addSpeed,
+  addCooling,
+  addSparking,
+  addTwinkle_Speed,
+  addTwinkle_Density
+};
+
 void loadSettings()
 {
-  brightness = EEPROM.read(0);
+  brightness = EEPROM.read(addBrightness);
 
-  currentPatternIndex = EEPROM.read(1);
+  currentPatternIndex = EEPROM.read(addPattern);
   if (currentPatternIndex < 0)
     currentPatternIndex = 0;
   else if (currentPatternIndex >= patternCount)
     currentPatternIndex = patternCount - 1;
 
-  byte r = EEPROM.read(2);
-  byte g = EEPROM.read(3);
-  byte b = EEPROM.read(4);
+  byte r = EEPROM.read(addColor_R);
+  byte g = EEPROM.read(addColor_G);
+  byte b = EEPROM.read(addColor_B);
 
   if (r == 0 && g == 0 && b == 0)
   {
@@ -790,23 +818,108 @@ void loadSettings()
     solidColor = CRGB(r, g, b);
   }
 
-  power = EEPROM.read(5);
+  power = EEPROM.read(addPower);
 
-  autoplay = EEPROM.read(6);
-  autoplayDuration = EEPROM.read(7);
+  autoplay = EEPROM.read(addAutoplay);
+  autoplayDuration = EEPROM.read(addAutoplay_Duration);
 
-  currentPaletteIndex = EEPROM.read(8);
+  currentPaletteIndex = EEPROM.read(addPalette);
   if (currentPaletteIndex < 0)
     currentPaletteIndex = 0;
   else if (currentPaletteIndex >= paletteCount)
     currentPaletteIndex = paletteCount - 1;
+
+  speed = EEPROM.read(addSpeed);
+  cooling = EEPROM.read(addCooling);
+  sparking = EEPROM.read(addSparking);
+  twinkleSpeed = EEPROM.read(addTwinkle_Speed);
+  if (twinkleSpeed < 0)
+	  twinkleSpeed = 0;
+  else if (twinkleSpeed > 8)
+	  twinkleSpeed = 8;
+
+  twinkleDensity = EEPROM.read(addTwinkle_Density);
+  if (twinkleDensity < 0)
+	  twinkleDensity = 0;
+  else if (twinkleDensity > 8)
+	  twinkleDensity = 8;
+}
+
+void setSpeed(uint8_t value)
+{
+	if (value > 255)
+		value = 255;
+	else if (value < 0) value = 0;
+
+	speed = value;
+
+	EEPROM.write(addSpeed, speed);
+	EEPROM.commit();
+
+	broadcastInt("speed", speed);
+}
+
+void setCooling(uint8_t value)
+{
+	if (value > 255)
+		value = 255;
+	else if (value < 0) value = 0;
+
+	cooling = value;
+
+	EEPROM.write(addCooling, cooling);
+	EEPROM.commit();
+
+	broadcastInt("cooling", cooling);
+}
+
+void setSparking(uint8_t value)
+{
+	if (value > 255)
+		value = 255;
+	else if (value < 0) value = 0;
+
+	sparking = value;
+
+	EEPROM.write(addSparking, sparking);
+	EEPROM.commit();
+
+	broadcastInt("sparking", sparking);
+}
+
+void setTwinkleSpeed(uint8_t value)
+{
+	if (value > 8)
+		value = 8;
+	else if (value < 0) value = 0;
+
+	twinkleSpeed = value;
+
+	EEPROM.write(addTwinkle_Speed, twinkleSpeed);
+	EEPROM.commit();
+
+	broadcastInt("twinkleSpeed", twinkleSpeed);
+}
+
+void setTwinkleDensity(uint8_t value)
+{
+	if (value > 8)
+		value = 8;
+	else if (value < 0) value = 0;
+
+	twinkleDensity = value;
+
+	EEPROM.write(addTwinkle_Density, twinkleDensity);
+	EEPROM.commit();
+
+	broadcastInt("twinkleDensity", twinkleDensity);
 }
 
 void setPower(uint8_t value)
 {
   power = value == 0 ? 0 : 1;
 
-  EEPROM.write(5, power);
+  EEPROM.write(addPower, power);
   EEPROM.commit();
 
   broadcastInt("power", power);
@@ -816,7 +929,7 @@ void setAutoplay(uint8_t value)
 {
   autoplay = value == 0 ? 0 : 1;
 
-  EEPROM.write(6, autoplay);
+  EEPROM.write(addAutoplay, autoplay);
   EEPROM.commit();
 
   broadcastInt("autoplay", autoplay);
@@ -826,7 +939,7 @@ void setAutoplayDuration(uint8_t value)
 {
   autoplayDuration = value;
 
-  EEPROM.write(7, autoplayDuration);
+  EEPROM.write(addAutoplay_Duration, autoplayDuration);
   EEPROM.commit();
 
   autoPlayTimeout = millis() + (autoplayDuration * 1000);
@@ -843,9 +956,9 @@ void setSolidColor(uint8_t r, uint8_t g, uint8_t b)
 {
   solidColor = CRGB(r, g, b);
 
-  EEPROM.write(2, r);
-  EEPROM.write(3, g);
-  EEPROM.write(4, b);
+  EEPROM.write(addColor_R, r);
+  EEPROM.write(addColor_G, g);
+  EEPROM.write(addColor_B, b);
   EEPROM.commit();
 
   setPattern(patternCount - 1);
@@ -868,7 +981,7 @@ void adjustPattern(bool up)
     currentPatternIndex = 0;
 
   if (autoplay == 0) {
-    EEPROM.write(1, currentPatternIndex);
+    EEPROM.write(addPattern, currentPatternIndex);
     EEPROM.commit();
   }
 
@@ -883,7 +996,7 @@ void setPattern(uint8_t value)
   currentPatternIndex = value;
 
   if (autoplay == 0) {
-    EEPROM.write(1, currentPatternIndex);
+    EEPROM.write(addPattern, currentPatternIndex);
     EEPROM.commit();
   }
 
@@ -907,7 +1020,7 @@ void setPalette(uint8_t value)
 
   currentPaletteIndex = value;
 
-  EEPROM.write(8, currentPaletteIndex);
+  EEPROM.write(addPalette, currentPaletteIndex);
   EEPROM.commit();
 
   broadcastInt("palette", currentPaletteIndex);
@@ -934,7 +1047,7 @@ void adjustBrightness(bool up)
 
   FastLED.setBrightness(brightness);
 
-  EEPROM.write(0, brightness);
+  EEPROM.write(addBrightness, brightness);
   EEPROM.commit();
 
   broadcastInt("brightness", brightness);
@@ -950,7 +1063,7 @@ void setBrightness(uint8_t value)
 
   FastLED.setBrightness(brightness);
 
-  EEPROM.write(0, brightness);
+  EEPROM.write(addBrightness, brightness);
   EEPROM.commit();
 
   broadcastInt("brightness", brightness);
