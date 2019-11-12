@@ -85,7 +85,7 @@ CRGB gBackgroundColor = CRGB::Black;
 // If COOL_LIKE_INCANDESCENT is set to 1, colors will
 // fade out slighted 'reddened', similar to how
 // incandescent bulbs change color as they get dim down.
-#define COOL_LIKE_INCANDESCENT 1
+#define COOL_LIKE_INCANDESCENT 0
 
 CRGBPalette16 twinkleFoxPalette;
 
@@ -243,7 +243,7 @@ const TProgmemRGBPalette16 Holly_p FL_PROGMEM =
 {  Holly_Green, Holly_Green, Holly_Green, Holly_Green,
    Holly_Green, Holly_Green, Holly_Green, Holly_Green,
    Holly_Green, Holly_Green, Holly_Green, Holly_Green,
-   Holly_Green, Holly_Green, Holly_Green, Holly_Red
+   Holly_Green, Holly_Red, Holly_Red, Holly_Red
 };
 
 // A red and white striped palette
@@ -277,6 +277,16 @@ const TProgmemRGBPalette16 Snow_p FL_PROGMEM =
    0x304048, 0x304048, 0x304048, 0x304048,
    0x304048, 0x304048, 0x304048, 0x304048,
    0x304048, 0x304048, 0x304048, 0xE0F0FF };
+
+// A palette of warm 2700K lighting
+#define WARM_2700_1 0xD2D21E
+#define WARM_2700_2 0xFFFF30
+#define WARM_2700_3 0xC4EE30
+const TProgmemRGBPalette16 Warm_p FL_PROGMEM =
+{  WARM_2700_1, WARM_2700_1, WARM_2700_1, WARM_2700_2,
+   WARM_2700_1, WARM_2700_1, WARM_2700_1, WARM_2700_3,
+   WARM_2700_1, WARM_2700_1, WARM_2700_1, WARM_2700_3,
+   WARM_2700_1, WARM_2700_1, WARM_2700_1, WARM_2700_2 };
 
 // A palette reminiscent of large 'old-school' C9-size tree lights
 // in the five classic colors: red, orange, green, blue, and white.
@@ -345,6 +355,12 @@ void iceTwinkles()
 {
   twinkleFoxPalette = Ice_p;
   drawTwinkles();
+}
+
+void warm2700Twinkles()
+{
+	twinkleFoxPalette = Warm_p;
+	drawTwinkles();
 }
 
 void retroC9Twinkles()
